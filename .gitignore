@@ -1,0 +1,6 @@
+#ignora tutti i file con estenzion .out , .o , .exe , .mtx
+*.out
+*.o
+*.exe 
+*.mtx
+*.log
