@@ -6,15 +6,15 @@
 gli array presenti nel tipo inmap andranno mantenuti sempre ordinati in modo crescente 
 in modo da controllare efficentemente se un arco sia gia stato inserito o meno */
 typedef struct {
-    int *inArrow ;
-    int len ;
+    int *inArrow ; //vettore utilizzato come set contenente nodi 
+    int len ; //lunghezza sel vettore inArrow
 } inmap ;
 
 typedef struct {
     int N  ; //numero nodi grafo
     int *out ; //array con numero di archi uscenti da ogni nodo
     inmap *in ; //array con gli insiemi di archi entranti in ogni nodo
-    pthread_mutex_t *mutex_arr;
+    pthread_mutex_t *mutex_arr; //mutex utilizzato per coordinare i consumatori nell'inizzializzazione dati del grafo
 } grafo ;
 
 typedef struct {
@@ -51,6 +51,7 @@ void ReadingFile(char *FileName, void *arg ) ;
 void *ArchManagement(void *arg) ;
 
 int main(int argc, char *argv[]){
+    //controllo che il parametro obbligatorio sia stato inserito
     if(argc < 2){
         printf("Il nome del file è un parametro obbligatorio\n") ;
         printf("Uso: %s nomefile \n",argv[0]) ;
@@ -82,7 +83,7 @@ int main(int argc, char *argv[]){
 
     //inizzializzazione struttura dati grafo
     int NodeNumber = ReadingNumberOfNode(FileName) ;
-    printf("Node num %d \n",NodeNumber);
+    
     grafo g ;
     g.N = NodeNumber ;
     g.out = calloc(NodeNumber,sizeof(int)) ; 
@@ -105,10 +106,9 @@ int main(int argc, char *argv[]){
     produttore.FreePlace = &FreePlace ;
     produttore.ItemNumber = &ItemNumber ;
 
-    //inizzializzazione struttura dati pre thread consumatore
+    //inizzializzazione struttura dati per thread consumatore
     dati consumatore[ThreadNumber] ;
     
-    //inizzializzazione struttura dati 
     for(int i = 0 ; i <ThreadNumber ; i++){
         consumatore[i].Buffer = buffer ;
         consumatore[i].FreePlace = &FreePlace ;
@@ -122,7 +122,7 @@ int main(int argc, char *argv[]){
     //lettura del file e caricamento del buffer
     ReadingFile(FileName,&produttore) ;
     
-    //comunico ai consumatori che possono terminare 
+    //comunicazione di termine lettura file 
     for(int i = 0 ; i < ThreadNumber ; i++){
         xsem_wait(&FreePlace,QUI) ;
         buffer[indexP % BufSize].i = -1 ; 
@@ -136,8 +136,6 @@ int main(int argc, char *argv[]){
         xpthread_join(th[i],NULL,QUI) ;
     }
 
-    printf("Lettura del file e inizzializzazione grafo terminata \n") ;
-    
     
     return 0 ;
 }
@@ -179,6 +177,7 @@ void merge(int *arr, int left, int mid, int right) {
     i = 0;
     j = 0;
     k = left;
+
     while (i < n1 && j < n2) {
         if (L[i] <= R[j]) {
             arr[k] = L[i];
@@ -219,7 +218,7 @@ void mergeSort(int *arr, int left, int right) {
 
 void ParsingCommandLine(int *NumberOfTopNodes, int *MaxIteration, float *DampFactor, double *MaxError, int *ThreadNumber , char **FileName, int argc, char*argv[]){
     int option ;
-
+    //utilizzo del funzione getopt per il parsing della linea di comando
     while((option = getopt(argc,argv,"k:d:m:e:t:")) != -1){
         switch(option){
             case 'k' :
@@ -281,6 +280,8 @@ int ReadingNumberOfNode(char *FileName){
         termina("Errore apertura file") ;
     }
 
+    /*per il momento mi interessa solo la lettura del numero di nodi 
+    necessario per l'inizzializzazione della struttura dati del grafo*/
     while((nread = getline(&line,&len,f)) != -1){
         if(line[0] != '%'){
             r = atoi(&line[0]) ;
@@ -302,9 +303,11 @@ int ReadingNumberOfNode(char *FileName){
 }
 
 void ReadingFile(char *FileName, void *arg ){
+    //casting della struttura dati
     dati *d = (dati *)arg ;
 
     FILE *f  = fopen(FileName,"r");
+
     //dati che rappresentano il numero di righe, colonne della matrice di adiacienza e il numero totale di archi 
     int r, c, n ;
     bool DatiIniziali = true ;
@@ -312,6 +315,7 @@ void ReadingFile(char *FileName, void *arg ){
     //dati che rappresentano nodo entrante e uscente di un arco
     int i, j ;
 
+    //dati necessari per l'utilizzo della funzione getline
     char *line ;
     size_t len = 0 ;
     int nread ;
@@ -349,21 +353,13 @@ void ReadingFile(char *FileName, void *arg ){
                 xsem_wait(d->FreePlace,QUI) ;
                 d->Buffer[*(d->buffindex) % BufSize].i = i ;
                 d->Buffer[*(d->buffindex) % BufSize].j = j ;
-                //printf("Scrittura dei valori nel buffer [%d] , i : %d , j : %d\n",(*d->buffindex),i,j) ;
+                
                 (*d->buffindex) += 1 ;
                 xsem_post(d->ItemNumber,QUI) ;
             }
        }
     }
-    /*
-    //inserisco un -1 all'interno del buffer per segnalare la fine della lettura 
-    xsem_wait(d->FreePlace,QUI) ;
-    d->Buffer[*(d->buffindex) % BufSize].i = -1 ;
-    d->Buffer[*(d->buffindex) % BufSize].j = -1 ;
-    printf("Inserisco -1 all'indice %d\n",*(d->buffindex) % BufSize) ;
-    //(*d->buffindex) += 1 ;
-    xsem_post(d->ItemNumber,QUI) ;
-    */
+    
     free(line) ;
     fclose(f) ;
     
@@ -374,6 +370,7 @@ void *ArchManagement(void *arg){
     int i , j ;
 
     while(true){
+        //prelevo i e j dal buffer utilizzando un mutex per l'accesso esclusivo
         xpthread_mutex_lock(d->mutex_buf,QUI) ;
         xsem_wait(d->ItemNumber,QUI) ;
 
@@ -395,11 +392,13 @@ void *ArchManagement(void *arg){
         i -= 1 ;
         j -= 1 ;
         
-        //essendo il vettore in ordinato faccio una ricerca binaria per vedere se un valore è presente al suo interno
         
+        //utilizzo un mutex per l'accesso esclusivo ai vettori in e out
         xpthread_mutex_lock(d->g->mutex_arr,QUI) ;
-        
+
+        //essendo il vettore in ordinato faccio una ricerca binaria per vedere se un valore è presente al suo interno
         if(!BinarySearch(i,d->g->in[j].inArrow,d->g->in[j].len)){
+
             //inserimento dell'elemento i allinterno dell'array di archi entranti in j 
             d->g->in[j].len += 1 ;
             d->g->in[j].inArrow = realloc(d->g->in[j].inArrow,d->g->in[j].len*sizeof(int)) ;
