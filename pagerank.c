@@ -1,6 +1,6 @@
 #include "xerrori.h"
 #define QUI __LINE__,__FILE__
-#define BufSize 20 
+#define BufSize 10 
 
 /*per ottimizzare la ricerca di archi entranti in uno specifico nodo 
 gli array presenti nel tipo inmap andranno mantenuti sempre ordinati in modo crescente 
@@ -14,7 +14,7 @@ typedef struct {
     int N  ; //numero nodi grafo
     int *out ; //array con numero di archi uscenti da ogni nodo
     inmap *in ; //array con gli insiemi di archi entranti in ogni nodo
-    pthread_mutex_t *mutex_arr; //mutex utilizzato per coordinare i consumatori nell'inizzializzazione dati del grafo
+    pthread_mutex_t *mutex_arr; //mutex utilizzato per coordinare accesso dati del grafo
 } grafo ;
 
 typedef struct {
@@ -29,7 +29,38 @@ typedef struct {
     sem_t *ItemNumber ; //semaforo che indica gli elementi presenti nel buffer
     int *buffindex ; //indice degli elementi nel buffer
     grafo *g ;
-} dati ;
+} datiC ; //struttura dati consumatore
+
+typedef struct {
+    coppia *Buffer ; //buffer
+    sem_t *FreePlace ; //semaforo che indica i posti liberi nel buffer
+    sem_t *ItemNumber ; //semaforo che indica gli elementi presenti nel buffer
+    int *buffindex ; //indice degli elementi nel buffer
+    int ThNumber ; //numero di thread
+} datiP; //struttura datu produttore
+
+typedef struct {
+    int j ; //nodo del quale abbiamo calcolato il pagerank
+    float x ; //nuovo valore del pagerank del nodo j 
+    float e ; //nuovo errore del nodo j
+} OutBuf ;
+
+typedef struct {
+    int *InBuf ; //buffer per la comunicazione da thread principale a thread ausiliario
+    int *InBufIndex ; //indice per accesso al buffer in ingresso
+    pthread_mutex_t *mutexIn ; //mutex per accesso esclusivo al buffer in entrata
+
+    OutBuf *Out ; //buffer per la comunicazione da thread ausiliario a thread principale
+    int *OutBufIndex ; //indice per accesso al buffer in uscita
+    pthread_mutex_t *mutexOut ; //mutex per accesso esclusivo al buffer in uscita  
+} PageRankBuf ;
+
+typedef struct {
+    PageRankBuf buffer ; //buffer per la comunicazione tra thread principale e ausiliari
+    float *X ; //vettore contenente il corrente valore del pagerank
+    float *Y ; //vettore contenente il corrente valore Y
+    grafo *g ;
+} PageRankdata ;
 
 //Funzione che cernca un particolare intero all'interno di un array 
 bool BinarySearch(int target, int *arr, int len) ;
@@ -39,7 +70,7 @@ void merge(int *arr, int left, int mid, int right);
 void mergeSort(int *arr, int left, int right) ;
 
 //funzione che inizzializza i parametri inseriti dall'utente sulla linea di comando
-void ParsingCommandLine(int *NumberOfTopNodes, int *MaxIteration, float *DampFactor, double *MaxError,int *ThreadNumber ,char **FileName,int argc, char*argv[]) ;
+void ParsingCommandLine(int *NumberOfTopNodes, int *MaxIteration, double *DampFactor, double *MaxError,int *ThreadNumber ,char **FileName,int argc, char*argv[]) ;
 
 //funzione che ritorna il numero di nodi del grafo
 int ReadingNumberOfNode(char *FileName) ;
@@ -49,6 +80,9 @@ void ReadingFile(char *FileName, void *arg ) ;
 
 //thread body che gestisce gli archi
 void *ArchManagement(void *arg) ;
+
+//algoritmo per il calcolo del PageRank
+double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *numiter) ;
 
 int main(int argc, char *argv[]){
     //controllo che il parametro obbligatorio sia stato inserito
@@ -61,7 +95,7 @@ int main(int argc, char *argv[]){
     //valore standrd dati in input
     int NumberOfTopNodes = 3 ;
     int MaxIteration = 100 ;
-    float DampFactor = 0.9 ;
+    double DampFactor = 0.9 ;
     double MaxError = 1.e-7 ;
     int ThreadNumber = 3 ;
     char *FileName = "" ;
@@ -87,27 +121,26 @@ int main(int argc, char *argv[]){
     grafo g ;
     g.N = NodeNumber ;
     g.out = calloc(NodeNumber,sizeof(int)) ; 
+    g.in = malloc(NodeNumber*sizeof(inmap)) ;
     g.mutex_arr = &mutexArr ;
 
-    inmap *arr = malloc(NodeNumber*sizeof(inmap));
 
     //inizzializzazioni campi array di tipo inmap
     for(int i = 0 ; i < NodeNumber ; i++){
-        arr[i].len = 0 ;
-        arr[i].inArrow = malloc((arr[i].len)*sizeof(int)) ;
+        g.in[i].len = 0 ;
+        g.in[i].inArrow = malloc((g.in[i].len)*sizeof(int)) ;
     }
 
-    g.in = arr ;
-
     //inizzializzazione struttura dati per thread produttore
-    dati produttore ;
+    datiP produttore ;
     produttore.Buffer = buffer ;
     produttore.buffindex = &indexP ;
     produttore.FreePlace = &FreePlace ;
     produttore.ItemNumber = &ItemNumber ;
+    produttore.ThNumber = ThreadNumber ;
 
     //inizzializzazione struttura dati per thread consumatore
-    dati consumatore[ThreadNumber] ;
+    datiC consumatore[ThreadNumber] ;
     
     for(int i = 0 ; i <ThreadNumber ; i++){
         consumatore[i].Buffer = buffer ;
@@ -122,21 +155,39 @@ int main(int argc, char *argv[]){
     //lettura del file e caricamento del buffer
     ReadingFile(FileName,&produttore) ;
     
-    //comunicazione di termine lettura file 
-    for(int i = 0 ; i < ThreadNumber ; i++){
-        xsem_wait(&FreePlace,QUI) ;
-        buffer[indexP % BufSize].i = -1 ; 
-        buffer[indexP % BufSize].j = -1 ; 
-        indexP++ ;
-        xsem_post(&ItemNumber,QUI) ;
-    }
 
     //attendo la fine dei consumatori
     for(int i = 0 ; i < ThreadNumber ; i++){
         xpthread_join(th[i],NULL,QUI) ;
     }
 
-    
+    //distruggo i semafori e mutex che non saranno più utilizzinati
+    xsem_destroy(&FreePlace,QUI) ;
+    xsem_destroy(&ItemNumber,QUI) ;
+    xpthread_mutex_destroy(&mutexBuf,QUI) ;
+    xpthread_mutex_destroy(&mutexArr,QUI) ;
+
+    /*
+    for(int i = 0 ; i < 9 ; i++){
+        printf("numero di archi uscenti del dono %d  : %d\n",i,g.out[i]) ;
+        printf("archi entranti nel nodo %d\n",i) ;
+        for(int j = 0 ; j < g.in[i].len ; j++){
+            printf("%d -> %d\n",g.in[i].inArrow[j],i) ;
+        }
+        printf("\n") ;
+    }*/
+    int IterationNumber = 0 ;
+    double *risultato = pagerank(&g,DampFactor,MaxError,MaxIteration,ThreadNumber,&IterationNumber) ;
+
+    //dealloco gli elementi del grafo
+    free(g.out) ;
+    for(int i = 0 ; i < NodeNumber ; i++){
+        free(g.in[i].inArrow) ; 
+    }
+    free(g.in) ;
+
+    //dealloco il vettore risultato
+    free(risultato) ;
     return 0 ;
 }
 
@@ -216,7 +267,7 @@ void mergeSort(int *arr, int left, int right) {
     }
 }
 
-void ParsingCommandLine(int *NumberOfTopNodes, int *MaxIteration, float *DampFactor, double *MaxError, int *ThreadNumber , char **FileName, int argc, char*argv[]){
+void ParsingCommandLine(int *NumberOfTopNodes, int *MaxIteration, double *DampFactor, double *MaxError, int *ThreadNumber , char **FileName, int argc, char*argv[]){
     int option ;
     //utilizzo del funzione getopt per il parsing della linea di comando
     while((option = getopt(argc,argv,"k:d:m:e:t:")) != -1){
@@ -272,9 +323,9 @@ int ReadingNumberOfNode(char *FileName){
     //dati che rappresentano il numero di righe, colonne della matrice di adiacienza e il numero totale di archi 
     int r = 0, c = 0, n = 0 ;
 
-    char *line ;
+    char *line = "";
     size_t len = 0 ;
-    int nread ;
+    int nread = 0 ;
 
     if(f == NULL){
         termina("Errore apertura file") ;
@@ -304,7 +355,7 @@ int ReadingNumberOfNode(char *FileName){
 
 void ReadingFile(char *FileName, void *arg ){
     //casting della struttura dati
-    dati *d = (dati *)arg ;
+    datiP *d = (datiP *)arg ;
 
     FILE *f  = fopen(FileName,"r");
 
@@ -316,7 +367,7 @@ void ReadingFile(char *FileName, void *arg ){
     int i, j ;
 
     //dati necessari per l'utilizzo della funzione getline
-    char *line ;
+    char *line ="";
     size_t len = 0 ;
     int nread ;
 
@@ -359,6 +410,15 @@ void ReadingFile(char *FileName, void *arg ){
             }
        }
     }
+
+    //comunico ai consumatori la fine della lettura del file 
+    for(int i = 0 ; i < d->ThNumber; i++){
+        xsem_wait(d->FreePlace,QUI) ;
+        d->Buffer[*(d->buffindex) % BufSize].i = -1 ; 
+        d->Buffer[*(d->buffindex) % BufSize].j = -1 ; 
+        (*d->buffindex) +=1 ;
+        xsem_post(d->ItemNumber,QUI) ;
+    }
     
     free(line) ;
     fclose(f) ;
@@ -366,7 +426,7 @@ void ReadingFile(char *FileName, void *arg ){
 }
 
 void *ArchManagement(void *arg){
-    dati *d = (dati *)arg ;
+    datiC *d = (datiC *)arg ;
     int i , j ;
 
     while(true){
@@ -414,4 +474,65 @@ void *ArchManagement(void *arg){
     }
     
     pthread_exit(NULL) ;
+}
+
+double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *numiter){
+    double *X = malloc(g->N*sizeof(double)) ;
+    double *Y = malloc(g->N*sizeof(double)) ;
+    double *NewX = malloc(g->N*sizeof(double)) ; 
+    
+    double error = 1 ;
+    double TeleportFactor = (1-d)/g->N ;
+
+    int *DeadNodes = malloc(g->N*sizeof(int)) ;
+    int NumberOfDeadNodes = 0 ;
+
+    int *NotDeadNodes = malloc(g->N*sizeof(int)) ;
+    int NumberdOfNotDeadNodes = 0 ;
+
+    //inizzializzazione del vettore pagerank e ricerca nodi senza archi uscenti
+    for(int i = 0 ; i < g->N ; i++){
+        
+        X[i] = 1.0/g->N ;
+
+        if(g->out[i] == 0){
+            printf("Nodo morto %d \n",i) ;
+            DeadNodes[NumberOfDeadNodes] = i ;
+            NumberOfDeadNodes += 1 ;
+        }else{
+            printf("Nodo non morto %d\n",i) ;
+            NotDeadNodes[NumberdOfNotDeadNodes] = i ;
+            NumberdOfNotDeadNodes += 1 ;
+        }
+    }
+
+    DeadNodes = realloc(DeadNodes,NumberOfDeadNodes*sizeof(int)) ;
+    NotDeadNodes = realloc(NotDeadNodes,NumberdOfNotDeadNodes*sizeof(int)) ;
+
+    if(DeadNodes == NULL) termina("Errore reallocazione vettore DeadNodes") ;
+    if(NotDeadNodes == NULL) termina("Errore reallocazione vettore NotDeadNodes") ;
+    double S = 0.0 ;
+
+    while(error > eps && (*numiter) < maxiter ){
+        //calcolo contributi DeadNodes
+        for(int i = 0 ; i < NumberOfDeadNodes ; i++){
+            S += X[DeadNodes[i]] ;
+        }
+        
+        S = (d/g->N) * S ;
+        
+        //calcolo vettore Y 
+        for(int i = 0 ; i < NumberdOfNotDeadNodes ; i++){
+            Y[NotDeadNodes[i]] = X[NotDeadNodes[i]]/g->out[NotDeadNodes[i]] ;
+        }
+
+        (*numiter) += 1000 ;
+    }
+    
+
+    free(X) ;
+    free(Y) ;
+    free(NotDeadNodes) ;
+    free(DeadNodes) ;
+    return NewX ;
 }
