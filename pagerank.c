@@ -1,4 +1,5 @@
 #include "xerrori.h"
+#include <math.h>
 #define QUI __LINE__,__FILE__
 #define BufSize 10 
 
@@ -41,24 +42,31 @@ typedef struct {
 
 typedef struct {
     int j ; //nodo del quale abbiamo calcolato il pagerank
-    float x ; //nuovo valore del pagerank del nodo j 
-    float e ; //nuovo errore del nodo j
+    double x ; //nuovo valore del pagerank del nodo j 
+    double e ; //nuovo errore del nodo j
 } OutBuf ;
 
 typedef struct {
     int *InBuf ; //buffer per la comunicazione da thread principale a thread ausiliario
     int *InBufIndex ; //indice per accesso al buffer in ingresso
     pthread_mutex_t *mutexIn ; //mutex per accesso esclusivo al buffer in entrata
+    sem_t *FreePlaceIn ; //semaforo che indica posti liberi nel buffer in entrata
+    sem_t *ItemNumberIn ; //semaforo che indica numero di elementi nel buffer in entrata
 
     OutBuf *Out ; //buffer per la comunicazione da thread ausiliario a thread principale
     int *OutBufIndex ; //indice per accesso al buffer in uscita
     pthread_mutex_t *mutexOut ; //mutex per accesso esclusivo al buffer in uscita  
+    sem_t *FreePlaceOut ; //semaforo che indica posti liberi nel buffer in uscita
+    sem_t *ItemNumberOut ; //semaforo che indica numero di elementi nel buffer in uscita 
 } PageRankBuf ;
 
 typedef struct {
     PageRankBuf buffer ; //buffer per la comunicazione tra thread principale e ausiliari
-    float *X ; //vettore contenente il corrente valore del pagerank
-    float *Y ; //vettore contenente il corrente valore Y
+    double *X ; //vettore contenente il corrente valore del pagerank
+    double *Y ; //vettore contenente il corrente valore Y
+    double TeleFactor ;
+    double *S ;
+    double d ;
     grafo *g ;
 } PageRankdata ;
 
@@ -84,6 +92,9 @@ void *ArchManagement(void *arg) ;
 //algoritmo per il calcolo del PageRank
 double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *numiter) ;
 
+//thread body che calcola il pagerank per uno specifico elemento j
+void *PagerankCalc(void *arg) ; 
+
 int main(int argc, char *argv[]){
     //controllo che il parametro obbligatorio sia stato inserito
     if(argc < 2){
@@ -96,7 +107,7 @@ int main(int argc, char *argv[]){
     int NumberOfTopNodes = 3 ;
     int MaxIteration = 100 ;
     double DampFactor = 0.9 ;
-    double MaxError = 1.e-7 ;
+    double MaxError = 1.e-4 ;
     int ThreadNumber = 3 ;
     char *FileName = "" ;
 
@@ -178,7 +189,7 @@ int main(int argc, char *argv[]){
     }*/
     int IterationNumber = 0 ;
     double *risultato = pagerank(&g,DampFactor,MaxError,MaxIteration,ThreadNumber,&IterationNumber) ;
-
+    printf("Fine Pagerank\n") ;
     //dealloco gli elementi del grafo
     free(g.out) ;
     for(int i = 0 ; i < NodeNumber ; i++){
@@ -188,6 +199,7 @@ int main(int argc, char *argv[]){
 
     //dealloco il vettore risultato
     free(risultato) ;
+    
     return 0 ;
 }
 
@@ -477,10 +489,40 @@ void *ArchManagement(void *arg){
 }
 
 double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *numiter){
+    //inizzializzazione vettori
     double *X = malloc(g->N*sizeof(double)) ;
     double *Y = malloc(g->N*sizeof(double)) ;
     double *NewX = malloc(g->N*sizeof(double)) ; 
-    
+
+    //inizzializzazione elementi per la sincronizzazione
+    sem_t FreePlaceIn , FreePlaceOut ;
+    sem_t ItemNumberIn , ItemNumberOut ;
+    pthread_mutex_t mutexIn  = PTHREAD_MUTEX_INITIALIZER ;
+    pthread_mutex_t mutexOut = PTHREAD_MUTEX_INITIALIZER ;
+
+    xsem_init(&FreePlaceIn,0,BufSize,QUI) ;
+    xsem_init(&FreePlaceOut,0,BufSize,QUI) ;
+    xsem_init(&ItemNumberIn,0,0,QUI) ;
+    xsem_init(&ItemNumberOut,0,0,QUI) ;
+
+    int InBufIndex = 0, OutBufIndex = 0 , InBufMain = 0;
+
+    //inizzializzazione buffer
+    PageRankBuf buffer ;
+
+    buffer.InBuf = malloc(BufSize * sizeof(int)) ;
+    buffer.InBufIndex = &InBufIndex ;
+    buffer.FreePlaceIn = &FreePlaceIn ;
+    buffer.ItemNumberIn = &ItemNumberIn ;
+    buffer.mutexIn = &mutexIn ;
+
+    buffer.Out = malloc(BufSize*sizeof(OutBuf)) ;
+    buffer.OutBufIndex = &OutBufIndex ;
+    buffer.FreePlaceOut = &FreePlaceOut ;
+    buffer.ItemNumberOut = &ItemNumberOut ;
+    buffer.mutexOut = &mutexOut ;
+
+    //inizzializzazione valori necessari al calcolo del Pagerank    
     double error = 1 ;
     double TeleportFactor = (1-d)/g->N ;
 
@@ -496,11 +538,9 @@ double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *num
         X[i] = 1.0/g->N ;
 
         if(g->out[i] == 0){
-            printf("Nodo morto %d \n",i) ;
             DeadNodes[NumberOfDeadNodes] = i ;
             NumberOfDeadNodes += 1 ;
         }else{
-            printf("Nodo non morto %d\n",i) ;
             NotDeadNodes[NumberdOfNotDeadNodes] = i ;
             NumberdOfNotDeadNodes += 1 ;
         }
@@ -513,7 +553,23 @@ double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *num
     if(NotDeadNodes == NULL) termina("Errore reallocazione vettore NotDeadNodes") ;
     double S = 0.0 ;
 
+    //partenza thread
+    pthread_t th[taux] ;
+    PageRankdata data[taux] ;
+
+    for(int i = 0 ; i < taux ; i++){
+        data[i].buffer = buffer ;
+        data[i].g = g ;
+        data[i].X = X ;
+        data[i].Y = Y ;
+        data[i].TeleFactor = TeleportFactor ;
+        data[i].S = &S ;
+        data[i].d = d ;
+        xpthread_create(&th[i],NULL,&PagerankCalc,&data[i],QUI) ;
+    }
+
     while(error > eps && (*numiter) < maxiter ){
+        error = 0 ;
         //calcolo contributi DeadNodes
         for(int i = 0 ; i < NumberOfDeadNodes ; i++){
             S += X[DeadNodes[i]] ;
@@ -526,13 +582,102 @@ double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *num
             Y[NotDeadNodes[i]] = X[NotDeadNodes[i]]/g->out[NotDeadNodes[i]] ;
         }
 
-        (*numiter) += 1000 ;
+        //caricamento buffer in entrata verso i thread ausiliari
+        //ogni thread si dovra occupare del calcolo della i-esima componente del vettore
+        for(int i = 0 ; i < g->N ; i++){
+            xsem_wait(&FreePlaceIn,QUI) ;
+            buffer.InBuf[InBufMain%BufSize] = i ;
+            xsem_post(&ItemNumberIn,QUI) ;
+
+            InBufMain += 1 ;
+        }
+
+        //estrazione dal buffer di uscita dei nouvi valori calcolati
+        for(int i = 0 ; i < g->N ; i++){
+            xsem_wait(&ItemNumberOut,QUI) ;
+
+            NewX[buffer.Out[i].j] = buffer.Out[i%BufSize].x ;
+            error += fabs((buffer.Out[i%BufSize].e)) ;
+
+            xsem_post(&FreePlaceIn,QUI) ;
+        }
+
+        //aggiornamento valori del vettore X per inizio nuova iterazione
+        for(int i = 0 ; i < g->N ; i++){
+            X[i] = NewX[i] ;
+        }
+
+        (*numiter) += 1 ;
+        //re inizzializzo i valori del semaforo per il buffer in uscita 
+        xsem_init(&FreePlaceOut,0,BufSize,QUI) ;
+        xsem_init(&ItemNumberOut,0,0,QUI) ;
+
     }
-    
+    //mando segnali ai thread di terminare
+    for(int i = 0 ; i < taux ; i++){
+        xsem_wait(&FreePlaceIn,QUI) ;
+        buffer.InBuf[InBufMain%BufSize] = -1 ;
+        xsem_post(&ItemNumberIn,QUI) ;
+
+        InBufMain += 1 ;
+    }
+
+    //aspetto la fine dei thread ausiliari
+    for(int i = 0 ; i < taux ; i++){
+        xpthread_join(th[i],NULL,QUI) ;
+    }
 
     free(X) ;
     free(Y) ;
     free(NotDeadNodes) ;
     free(DeadNodes) ;
+    free(buffer.InBuf) ;
+    free(buffer.Out) ;
     return NewX ;
+}
+
+void *PagerankCalc(void *arg){
+    PageRankdata *data = (PageRankdata *) arg ;
+    int j = 0 ;
+    float somma  = 0.0, newx = 0.0 , newe = 0.0;
+
+    while(true){
+        somma = 0 ;
+        newx = 0 ;
+        newe = 0 ;
+
+        //prelevo l'indice di cui dovremmo calcolare il pagerank dal buffer
+        
+        xsem_wait(data->buffer.ItemNumberIn,QUI) ;
+        xpthread_mutex_lock(data->buffer.mutexIn,QUI) ;
+        
+        j = data->buffer.InBuf[(*data->buffer.InBufIndex)%BufSize] ;
+        (*data->buffer.InBufIndex) += 1 ;
+
+        xpthread_mutex_unlock(data->buffer.mutexIn,QUI) ;
+        xsem_post(data->buffer.FreePlaceIn,QUI) ;
+        
+        if(j == -1) pthread_exit(NULL) ;
+        //calcolo del nuovo fattore pagerank
+        for(int i = 0 ; i < data->g->in[j].len ; i++){
+            somma += data->Y[data->g->in[j].inArrow[i]] ;
+        }
+
+        newx += data->TeleFactor + (*data->S) + data->d * somma ;
+        newe = fabs(data->X[j] -newx ) ;
+
+        //caricamento del nuovo pagerank sul buffer in uscita
+        
+        xsem_wait(data->buffer.FreePlaceOut,QUI) ;
+        xpthread_mutex_lock(data->buffer.mutexOut,QUI) ;
+        
+        data->buffer.Out[(*data->buffer.OutBufIndex)%BufSize].j = j ;
+        data->buffer.Out[(*data->buffer.OutBufIndex)%BufSize].x = newx ;
+        data->buffer.Out[(*data->buffer.OutBufIndex)%BufSize].e = newe ;
+        (*data->buffer.OutBufIndex) += 1 ;
+        
+        xpthread_mutex_unlock(data->buffer.mutexOut,QUI) ;
+        xsem_post(data->buffer.ItemNumberOut,QUI) ;
+       
+    }
 }
