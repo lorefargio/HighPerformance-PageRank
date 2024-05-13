@@ -3,9 +3,6 @@
 #define QUI __LINE__,__FILE__
 #define BufSize 10 
 
-/*per ottimizzare la ricerca di archi entranti in uno specifico nodo 
-gli array presenti nel tipo inmap andranno mantenuti sempre ordinati in modo crescente 
-in modo da controllare efficentemente se un arco sia gia stato inserito o meno */
 typedef struct {
     int *inArrow ; //vettore utilizzato come set contenente nodi 
     int len ; //lunghezza sel vettore inArrow
@@ -60,12 +57,8 @@ typedef struct {
     int index ;
 } TopElement ;
 
-//Funzione che cernca un particolare intero all'interno di un array 
-bool BinarySearch(int target, int *arr, int len) ;
-
-//Funzione MergeSort
-void merge(int *arr, int left, int mid, int right);
-void mergeSort(int *arr, int left, int right) ;
+//Funzione che cerca un particolare intero all'interno di un array 
+bool Search(int target, int *arr, int len) ;
 
 //funzione che inizzializza i parametri inseriti dall'utente sulla linea di comando
 void ParsingCommandLine(int *NumberOfTopNodes, int *MaxIteration, double *DampFactor, double *MaxError,int *ThreadNumber ,char **FileName,int argc, char*argv[]) ;
@@ -164,7 +157,7 @@ int main(int argc, char *argv[]){
     for(int i = 0 ; i < ThreadNumber ; i++){
         xpthread_join(th[i],NULL,QUI) ;
     }
-    printf("Fine lettura file\n") ;
+    
     //distruggo i semafori e mutex che non saranno più utilizzinati
     xsem_destroy(&FreePlace,QUI) ;
     xsem_destroy(&ItemNumber,QUI) ;
@@ -216,21 +209,9 @@ int main(int argc, char *argv[]){
     return 0 ;
 }
 
-bool BinarySearch(int target, int *arr, int len){
-    int left = 0 , right = len-1 , mid ;
-
-    while(left<=right){
-        mid = left + (right-left)/2 ;
-
-        if(arr[mid] == target){
-            return true ;
-        }else{
-            if(arr[mid] > target){
-                right = mid - 1 ;
-            }else{
-                left = mid + 1 ;
-            }
-        }
+bool Search(int target, int *arr, int len){
+    for(int i = 0 ; i < len ; i++){
+        if(arr[i] == target) return true ;
     }
     return false ;
 }
@@ -483,15 +464,12 @@ void *ArchManagement(void *arg){
         xpthread_mutex_lock(d->g->mutex_arr,QUI) ;
 
         //essendo il vettore in ordinato faccio una ricerca binaria per vedere se un valore è presente al suo interno
-        if(!BinarySearch(i,d->g->in[j].inArrow,d->g->in[j].len)){
-            printf("gestione arco %d --> %d\n",i,j) ;
+        if(!Search(i,d->g->in[j].inArrow,d->g->in[j].len)){
+
             //inserimento dell'elemento i allinterno dell'array di archi entranti in j 
             d->g->in[j].len += 1 ;
             d->g->in[j].inArrow = realloc(d->g->in[j].inArrow,d->g->in[j].len*sizeof(int)) ;
             d->g->in[j].inArrow[d->g->in[j].len-1] = i ;
-
-            //ordinamento dell'array
-            mergeSort(d->g->in[j].inArrow,0,d->g->in[j].len-1) ;
             
             //aumento dal valore degli archi uscenti dal nodo i
             d->g->out[i] += 1 ;
@@ -595,7 +573,7 @@ double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *num
             break ;
         }
         (*numiter) += 1 ;
-        printf("\nFine %d° iterazione error : %.7f\n",(*numiter),error) ;
+        
         error = 0 ;
         S = 0 ;
 
