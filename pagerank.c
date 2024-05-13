@@ -35,18 +35,18 @@ typedef struct {
     sem_t *ItemNumber ; //semaforo che indica gli elementi presenti nel buffer
     int *buffindex ; //indice degli elementi nel buffer
     int ThNumber ; //numero di thread
-} datiP; //struttura datu produttore
+} datiP; //struttura dati produttore
 
 typedef struct {
     double *X ; //vettore contenente il corrente valore del pagerank
     double *NewX ; //vettore dei nuovi pagerank appena calcolati
     double *Y ; //vettore contenente il corrente valore Y
     double *e ; //errore 
-    double TeleFactor ;
+    double TeleFactor ; 
     double *S ;
     double d ;
-    int *WorkingIndex ;
-    pthread_mutex_t *mutex ;
+    int *WorkingIndex ; //inidce sul quale i thread devono lavorere
+    pthread_mutex_t *mutex ; //mutex per la gestione delle condition variables
     pthread_cond_t *IndiceRaggiunto ;
     pthread_cond_t *IndiceResettato ;
     grafo *g ;
@@ -55,7 +55,7 @@ typedef struct {
 typedef struct {
     double value ;
     int index ;
-} TopElement ;
+} TopElement ; //struttura dati per la stampa dei top nodi
 
 //Funzione che cerca un particolare intero all'interno di un array 
 bool Search(int target, int *arr, int len) ;
@@ -88,8 +88,9 @@ int main(int argc, char *argv[]){
         printf("Uso: %s nomefile \n",argv[0]) ;
         return 1 ;
     }
+   
     
-    //valore standrd dati in input
+    //valore standard dati in input
     int NumberOfTopNodes = 3 ;
     int MaxIteration = 100 ;
     double DampFactor = 0.9 ;
@@ -158,33 +159,41 @@ int main(int argc, char *argv[]){
         xpthread_join(th[i],NULL,QUI) ;
     }
     
+    //inizzializzazione dati per il calcolo del pagerank e stampa dei risultati
+    int IterationNumber = 0 , DeadNodesNumber = 0 , ValidArch = 0 ;
+    double RankSum = 0.0;
+
+    for(int i = 0 ; i < NodeNumber ; i++){
+        if(g.out[i] == 0){
+            DeadNodesNumber += 1 ;
+        }
+        ValidArch += g.in[i].len ;   
+    }
+
+    printf("Number of nodes: %d\n",NodeNumber) ;
+    printf("Number od dead-end nodes: %d\n",DeadNodesNumber) ;
+    printf("Number of Valid arcs : %d\n",ValidArch) ;
+
     //distruggo i semafori e mutex che non saranno più utilizzinati
     xsem_destroy(&FreePlace,QUI) ;
     xsem_destroy(&ItemNumber,QUI) ;
     xpthread_mutex_destroy(&mutexBuf,QUI) ;
     xpthread_mutex_destroy(&mutexArr,QUI) ;
 
-    
-    int IterationNumber = 0 , DeadNodesNumber = 0 , ValidArch = 0 ;
-    double RankSum = 0.0;
-    
     double *risultato = pagerank(&g,DampFactor,MaxError,MaxIteration,ThreadNumber,&IterationNumber) ;
-    TopElement *risordinato = malloc(NodeNumber*sizeof(TopElement)) ;
 
+    TopElement *RisOrdinato = malloc(NodeNumber*sizeof(TopElement)) ;
+
+    //calcolo della somma dei rank e inizzializzazione struttura dati TopElement
     for(int i = 0 ; i < NodeNumber ; i++){
-        if(g.out[i] == 0){
-            DeadNodesNumber += 1 ;
-        }
-        ValidArch += g.in[i].len ;
         RankSum += risultato[i] ;
-        risordinato[i].value = risultato[i] ;
-        risordinato[i].index = i ;
+        RisOrdinato[i].value = risultato[i] ;
+        RisOrdinato[i].index = i ;
     }
-    qsort(risordinato,NodeNumber,sizeof(TopElement),comparazione_decrescente) ;
+
+    qsort(RisOrdinato,NodeNumber,sizeof(TopElement),comparazione_decrescente) ;
+
     //stampa risultati
-    printf("Number of nodes: %d\n",NodeNumber) ;
-    printf("Number od dead-end nodes: %d\n",DeadNodesNumber) ;
-    printf("Number of Valid arcs : %d\n",ValidArch) ;
     if(IterationNumber < MaxIteration){
         printf("Converged after %d iterations\n",IterationNumber) ;
     }else{
@@ -192,8 +201,9 @@ int main(int argc, char *argv[]){
     }
     printf("Sum of ranks : %.4f (should be 1)\n",RankSum) ;
     printf("Top %d nodes : \n",NumberOfTopNodes) ;
+
     for(int i = 0 ; i < NumberOfTopNodes ; i++){
-        printf("%d %f\n",risordinato[i].index,risordinato[i].value) ;
+        printf("%d %f\n",RisOrdinato[i].index,RisOrdinato[i].value) ;
     }
 
     //dealloco gli elementi del grafo
@@ -205,7 +215,7 @@ int main(int argc, char *argv[]){
 
     //dealloco il vettore risultato
     free(risultato) ;
-    free(risordinato) ;
+    free(RisOrdinato) ;
     return 0 ;
 }
 
@@ -214,63 +224,6 @@ bool Search(int target, int *arr, int len){
         if(arr[i] == target) return true ;
     }
     return false ;
-}
-
-void merge(int *arr, int left, int mid, int right) {
-    int i, j, k;
-    int n1 = mid - left + 1;
-    int n2 = right - mid;
-
-    
-    int L[n1], R[n2];
-
-    
-    for (i = 0; i < n1; i++)
-        L[i] = arr[left + i];
-    for (j = 0; j < n2; j++)
-        R[j] = arr[mid + 1 + j];
-
-    // unione dei due array
-    i = 0;
-    j = 0;
-    k = left;
-
-    while (i < n1 && j < n2) {
-        if (L[i] <= R[j]) {
-            arr[k] = L[i];
-            i++;
-        } else {
-            arr[k] = R[j];
-            j++;
-        }
-        k++;
-    }
-
-    // Copio gli elementi rimanenti di entrambi i vettori
-    while (i < n1) {
-        arr[k] = L[i];
-        i++;
-        k++;
-    }
-
-    
-    while (j < n2) {
-        arr[k] = R[j];
-        j++;
-        k++;
-    }
-}
-
-void mergeSort(int *arr, int left, int right) {
-    if (left < right) {
-        int mid = left + (right - left) / 2;
-
-        mergeSort(arr, left, mid);
-        mergeSort(arr, mid + 1, right);
-
-        // unione dei due array 
-        merge(arr, left, mid, right);
-    }
 }
 
 void ParsingCommandLine(int *NumberOfTopNodes, int *MaxIteration, double *DampFactor, double *MaxError, int *ThreadNumber , char **FileName, int argc, char*argv[]){
