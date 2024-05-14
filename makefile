@@ -4,7 +4,7 @@ CC=gcc
 CFLAGS=-std=c11 -Wall -g -O -pthread
 LDLIBS=-lm -lrt -pthread
 
-EXECS = pagerank.out
+EXECS = pagerank.out 
 
 all: $(EXECS)
 

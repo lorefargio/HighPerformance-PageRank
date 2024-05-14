@@ -3,6 +3,9 @@
 #define QUI __LINE__,__FILE__
 #define BufSize 10 
 
+volatile bool segnale = false ;
+volatile bool fine = false ;
+
 typedef struct {
     int *inArrow ; //vettore utilizzato come set contenente nodi 
     int len ; //lunghezza sel vettore inArrow
@@ -26,6 +29,7 @@ typedef struct {
     sem_t *FreePlace ; //semaforo che indica i posti liberi nel buffer
     sem_t *ItemNumber ; //semaforo che indica gli elementi presenti nel buffer
     int *buffindex ; //indice degli elementi nel buffer
+    int *inseriti ; //array che tiene conto dei numeri inseriti nell'array di tipo inmap per fare realloc
     grafo *g ;
 } datiC ; //struttura dati consumatore
 
@@ -57,6 +61,12 @@ typedef struct {
     int index ;
 } TopElement ; //struttura dati per la stampa dei top nodi
 
+typedef struct {
+    pthread_mutex_t *mutex ;//per trovare il nodo col maggior pagerank mi devo assicurare che il vettore non venga modificatp
+    double *X ;
+    int *IterationNumber ;
+    int NodeNumber ;
+} SignalData ;
 //Funzione che cerca un particolare intero all'interno di un array 
 bool Search(int target, int *arr, int len) ;
 
@@ -80,6 +90,12 @@ void *PagerankCalc(void *arg) ;
 
 //funzione per l'ordinamento con qsort
 int comparazione_decrescente(const void *a, const void *b) ;
+
+//corpo del thread per la gestione die segnali
+void *SignalBody(void *arg) ;
+
+//handler per il segnale 
+void handler(int s) ;
 
 int main(int argc, char *argv[]){
     //controllo che il parametro obbligatorio sia stato inserito
@@ -139,7 +155,7 @@ int main(int argc, char *argv[]){
 
     //inizzializzazione struttura dati per thread consumatore
     datiC consumatore[ThreadNumber] ;
-    
+    int *ValoriInseriti = calloc(NodeNumber,sizeof(int)) ;
     for(int i = 0 ; i <ThreadNumber ; i++){
         consumatore[i].Buffer = buffer ;
         consumatore[i].FreePlace = &FreePlace ;
@@ -147,6 +163,7 @@ int main(int argc, char *argv[]){
         consumatore[i].mutex_buf = &mutexBuf ;
         consumatore[i].buffindex = &indexC ;
         consumatore[i].g = &g ;
+        consumatore[i].inseriti = ValoriInseriti ;
         xpthread_create(&th[i],NULL,&ArchManagement,&consumatore[i],QUI) ;
     }
     
@@ -164,6 +181,9 @@ int main(int argc, char *argv[]){
     double RankSum = 0.0;
 
     for(int i = 0 ; i < NodeNumber ; i++){
+        g.in[i].len = ValoriInseriti[i] ;
+        g.in[i].inArrow = realloc(g.in[i].inArrow,ValoriInseriti[i]*sizeof(int)) ;
+        
         if(g.out[i] == 0){
             DeadNodesNumber += 1 ;
         }
@@ -171,8 +191,8 @@ int main(int argc, char *argv[]){
     }
 
     printf("Number of nodes: %d\n",NodeNumber) ;
-    printf("Number od dead-end nodes: %d\n",DeadNodesNumber) ;
-    printf("Number of Valid arcs : %d\n",ValidArch) ;
+    printf("Number of dead-end nodes: %d\n",DeadNodesNumber) ;
+    printf("Number of valid arcs: %d\n",ValidArch) ;
 
     //distruggo i semafori e mutex che non saranno più utilizzinati
     xsem_destroy(&FreePlace,QUI) ;
@@ -199,11 +219,11 @@ int main(int argc, char *argv[]){
     }else{
         printf("Did not converge after %d iterations\n",MaxIteration) ;
     }
-    printf("Sum of ranks : %.4f (should be 1)\n",RankSum) ;
-    printf("Top %d nodes : \n",NumberOfTopNodes) ;
+    printf("Sum of ranks: %.4f   (should be 1)\n",RankSum) ;
+    printf("Top %d nodes: \n",NumberOfTopNodes) ;
 
     for(int i = 0 ; i < NumberOfTopNodes ; i++){
-        printf("%d %f\n",RisOrdinato[i].index,RisOrdinato[i].value) ;
+        printf("  %d %f\n",RisOrdinato[i].index,RisOrdinato[i].value) ;
     }
 
     //dealloco gli elementi del grafo
@@ -214,12 +234,15 @@ int main(int argc, char *argv[]){
     free(g.in) ;
 
     //dealloco il vettore risultato
+    free(ValoriInseriti) ;
     free(risultato) ;
     free(RisOrdinato) ;
     return 0 ;
 }
 
 bool Search(int target, int *arr, int len){
+    if(len == 0) return false ;
+
     for(int i = 0 ; i < len ; i++){
         if(arr[i] == target) return true ;
     }
@@ -387,8 +410,8 @@ void ReadingFile(char *FileName, void *arg ){
 
 void *ArchManagement(void *arg){
     datiC *d = (datiC *)arg ;
-    int i , j ;
-
+    int i = 0 , j = 0 ;
+    
     while(true){
         //prelevo i e j dal buffer utilizzando un mutex per l'accesso esclusivo
         xpthread_mutex_lock(d->mutex_buf,QUI) ;
@@ -416,13 +439,23 @@ void *ArchManagement(void *arg){
         //utilizzo un mutex per l'accesso esclusivo ai vettori in e out
         xpthread_mutex_lock(d->g->mutex_arr,QUI) ;
 
-        //essendo il vettore in ordinato faccio una ricerca binaria per vedere se un valore è presente al suo interno
-        if(!Search(i,d->g->in[j].inArrow,d->g->in[j].len)){
+        
+        if(!Search(i,d->g->in[j].inArrow,d->inseriti[j])){
 
             //inserimento dell'elemento i allinterno dell'array di archi entranti in j 
-            d->g->in[j].len += 1 ;
+            
+            if(d->inseriti[j] == d->g->in[j].len){
+                if(d->g->in[j].len == 0){
+                    d->g->in[j].len = 10 ;
+                    d->g->in[j].inArrow = realloc(d->g->in[j].inArrow,d->g->in[j].len*sizeof(int)) ;
+                }else{
+                    d->g->in[j].len *= 2 ;
+                    d->g->in[j].inArrow = realloc(d->g->in[j].inArrow,d->g->in[j].len*sizeof(int)) ;
+                }
+            }
+            d->inseriti[j] += 1 ;
             d->g->in[j].inArrow = realloc(d->g->in[j].inArrow,d->g->in[j].len*sizeof(int)) ;
-            d->g->in[j].inArrow[d->g->in[j].len-1] = i ;
+            d->g->in[j].inArrow[d->inseriti[j] -1] = i ;
             
             //aumento dal valore degli archi uscenti dal nodo i
             d->g->out[i] += 1 ;
@@ -480,8 +513,18 @@ double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *num
     double S = 0.0 ;
 
     //partenza thread
+    pthread_t GestisceSegnale ;
+    SignalData dati ;
+    dati.IterationNumber = numiter ;
+    dati.X = X ;
+    dati.mutex = &mutexWorkIndex ;
+    dati.NodeNumber = g->N ;
+
     pthread_t th[taux] ;
     PageRankdata data[taux] ;
+
+    //partenza del thread per la gestione del segnale SIGUSR1
+    xpthread_create(&GestisceSegnale,NULL,&SignalBody,&dati,QUI) ;
 
     //calcolo contributi DeadNodes
     for(int i = 0 ; i < NumberOfDeadNodes ; i++){
@@ -555,11 +598,13 @@ double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *num
     }
     
     (*data->WorkingIndex) = -1 ;
+    fine = true ;
 
     //aspetto la fine dei thread ausiliari
     for(int i = 0 ; i < taux ; i++){
         xpthread_join(th[i],NULL,QUI) ;
     }
+    xpthread_join(GestisceSegnale,NULL,QUI)  ;
 
     free(X) ;
     free(Y) ;
@@ -625,4 +670,44 @@ int comparazione_decrescente(const void *a, const void *b) {
     } else {
         return 0;
     }
+}
+
+void *SignalBody(void *arg){
+    SignalData *d = (SignalData *)arg ;
+    double MaxValue = -1 ;
+    int indice = 0 ;
+    int iterazione = 0 ;
+
+    // definisco signal handler 
+    struct sigaction sa;
+    sa.sa_handler = &handler;
+    sa.sa_flags = SA_SIGINFO ;
+    
+    sigfillset(&sa.sa_mask); 
+    sigdelset(&sa.sa_mask,SIGUSR1); 
+    sigaction(SIGUSR1,&sa,NULL);  
+
+    while(!fine){
+        if(segnale){
+            //faccio lock del mutex per lavorare sul vettore X
+            xpthread_mutex_lock(d->mutex,QUI) ;
+            for(int i = 0 ; i < d->NodeNumber ; i++){
+                if(d->X[i] > MaxValue){
+                    MaxValue = d->X[i] ;
+                    indice = i ;
+                    iterazione = (*d->IterationNumber) ;
+                }
+            }
+            xpthread_mutex_unlock(d->mutex,QUI) ;
+            fprintf(stderr,"\nCurrent Iteration : %d\n",iterazione) ;
+            fprintf(stderr,"Current Max Pagerank node : %d value : %f\n",indice,MaxValue);
+            segnale = false ;
+        }
+    }
+    
+    pthread_exit(NULL) ;
+}
+
+void handler(int s){
+    segnale = true ;
 }
