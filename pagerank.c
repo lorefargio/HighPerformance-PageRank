@@ -463,7 +463,8 @@ void *ArchManagement(void *arg){
         xpthread_mutex_unlock(d->g->mutex_arr,QUI) ;
     }
     
-    //pthread_exit(NULL) ;
+    /*uso return null perchè l'utilizzo di pthread_exit 
+    sfociava in segmenti di memoria possibilmente raggiungibili  per valgrind*/
     return NULL ;
 }
 
@@ -638,7 +639,8 @@ void *PagerankCalc(void *arg){
 
         if(j == -1){ 
             xpthread_mutex_unlock(data->mutex,QUI) ;
-            //pthread_exit(NULL) ;
+            /*uso return null perchè l'utilizzo di pthread_exit 
+            sfociava in segmenti di memoria possibilmente raggiungibili  per valgrind*/
             return NULL ;
         }
 
@@ -707,7 +709,8 @@ void *SignalBody(void *arg){
         }
     }
     
-    //pthread_exit(NULL) ;
+    /*uso return null perchè l'utilizzo di pthread_exit 
+    sfociava in segmenti di memoria possibilmente raggiungibili  per valgrind*/
     return NULL ;
 }
 
