@@ -16,6 +16,3 @@ pagerank: pagerank.o xerrori.o
 pagerank.o: pagerank.c xerrori.h
 	$(CC) $(CFLAGS) -c $<
 
-#cancellazione dei file oggetto e degli eseguibili
-clean: 
-	rm -f *.o $(EXECS)
