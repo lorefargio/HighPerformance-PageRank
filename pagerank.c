@@ -463,7 +463,8 @@ void *ArchManagement(void *arg){
         xpthread_mutex_unlock(d->g->mutex_arr,QUI) ;
     }
     
-    pthread_exit(NULL) ;
+    //pthread_exit(NULL) ;
+    return NULL ;
 }
 
 double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *numiter){
@@ -637,7 +638,8 @@ void *PagerankCalc(void *arg){
 
         if(j == -1){ 
             xpthread_mutex_unlock(data->mutex,QUI) ;
-            pthread_exit(NULL) ;
+            //pthread_exit(NULL) ;
+            return NULL ;
         }
 
         (*data->WorkingIndex) += 1 ;
@@ -705,7 +707,8 @@ void *SignalBody(void *arg){
         }
     }
     
-    pthread_exit(NULL) ;
+    //pthread_exit(NULL) ;
+    return NULL ;
 }
 
 void handler(int s){
