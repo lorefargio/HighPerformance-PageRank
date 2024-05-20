@@ -599,7 +599,7 @@ double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *num
         
     }
     
-    (*data->WorkingIndex) = -1 ;
+    
     fine = true ;
 
     //aspetto la fine dei thread ausiliari
