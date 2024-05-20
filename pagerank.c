@@ -164,7 +164,7 @@ int main(int argc, char *argv[]){
         consumatore[i].buffindex = &indexC ;
         consumatore[i].g = &g ;
         consumatore[i].inseriti = ValoriInseriti ;
-        xpthread_create(&th[i],NULL,&ArchManagement,&consumatore[i],QUI) ;
+        xpthread_create(&th[i],NULL,ArchManagement,&consumatore[i],QUI) ;
     }
     
     //lettura del file e caricamento del buffer
