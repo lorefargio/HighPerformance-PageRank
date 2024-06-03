@@ -16,3 +16,5 @@ pagerank: pagerank.o xerrori.o
 pagerank.o: pagerank.c xerrori.h
 	$(CC) $(CFLAGS) -c $<
 
+clean:
+		rm -f *.o 

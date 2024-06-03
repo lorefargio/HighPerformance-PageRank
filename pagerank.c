@@ -481,6 +481,7 @@ double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *num
     //inizzializzazione valori necessari al calcolo del Pagerank    
     double error = 0 ;
     double TeleportFactor = (1-d)/g->N ;
+    double S = 0.0 ;
 
     int *DeadNodes = malloc(g->N*sizeof(int)) ;
     int NumberOfDeadNodes = 0 ;
@@ -496,6 +497,7 @@ double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *num
         if(g->out[i] == 0){
             DeadNodes[NumberOfDeadNodes] = i ;
             NumberOfDeadNodes += 1 ;
+           
         }else{
             NotDeadNodes[NumberdOfNotDeadNodes] = i ;
             NumberdOfNotDeadNodes += 1 ;
@@ -507,7 +509,7 @@ double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *num
 
     if(DeadNodes == NULL) termina("Errore reallocazione vettore DeadNodes") ;
     if(NotDeadNodes == NULL) termina("Errore reallocazione vettore NotDeadNodes") ;
-    double S = 0.0 ;
+
 
     //partenza thread
     pthread_t GestisceSegnale ;
@@ -522,13 +524,12 @@ double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *num
 
     //partenza del thread per la gestione del segnale SIGUSR1
     xpthread_create(&GestisceSegnale,NULL,&SignalBody,&dati,QUI) ;
-
+    
     //calcolo contributi DeadNodes
     for(int i = 0 ; i < NumberOfDeadNodes ; i++){
             S += X[DeadNodes[i]] ;
     }
-            
-    S = (d/g->N) * S ;
+    S = (d/g->N) * S ;  
             
     //calcolo vettore Y 
     for(int i = 0 ; i < NumberdOfNotDeadNodes ; i++){
@@ -555,12 +556,12 @@ double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *num
         
         xpthread_mutex_lock(&mutexWorkIndex,QUI) ;
 
-        while((*data->WorkingIndex) < g->N){
+        while(WorkIndex < g->N){
             xpthread_cond_wait(&IndiceRaggiunto,&mutexWorkIndex,QUI) ;
         }
 
         if(error < eps || (*numiter) > maxiter){
-            (*data->WorkingIndex) = -1 ;
+            WorkIndex = -1 ;
             xpthread_mutex_unlock(&mutexWorkIndex,QUI) ;
             xpthread_cond_broadcast(&IndiceResettato,QUI) ;
             break ;
@@ -587,7 +588,7 @@ double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *num
                 Y[NotDeadNodes[i]] = X[NotDeadNodes[i]]/g->out[NotDeadNodes[i]] ;
         }
         
-        (*data->WorkingIndex) = 0 ;
+        WorkIndex = 0 ;
     
         xpthread_mutex_unlock(&mutexWorkIndex,QUI) ;
         xpthread_cond_broadcast(&IndiceResettato,QUI) ;
