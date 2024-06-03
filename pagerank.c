@@ -114,6 +114,9 @@ int main(int argc, char *argv[]){
     int ThreadNumber = 3 ;
     char *FileName = "" ;
 
+    //parsing della linea di comando
+    ParsingCommandLine(&NumberOfTopNodes,&MaxIteration,&DampFactor,&MaxError,&ThreadNumber,&FileName,argc,argv) ;
+    
     //dati di sincronizzazione thread
     pthread_t th[ThreadNumber] ;
     sem_t FreePlace , ItemNumber ;
@@ -122,9 +125,6 @@ int main(int argc, char *argv[]){
     coppia buffer[BufSize] ;
     int indexP = 0 , indexC = 0 ;
 
-    //parsing della linea di comando
-    ParsingCommandLine(&NumberOfTopNodes,&MaxIteration,&DampFactor,&MaxError,&ThreadNumber,&FileName,argc,argv) ;
-    
     //inizzializzazione semafori per la gestione del buffer
     xsem_init(&FreePlace,0,BufSize,QUI) ;
     xsem_init(&ItemNumber,0,0,QUI) ;
@@ -141,7 +141,7 @@ int main(int argc, char *argv[]){
 
     //inizzializzazioni campi array di tipo inmap
     for(int i = 0 ; i < NodeNumber ; i++){
-        g.in[i].len = 0 ;
+        g.in[i].len = 10 ;
         g.in[i].inArrow = malloc((g.in[i].len)*sizeof(int)) ;
     }
 
@@ -156,7 +156,8 @@ int main(int argc, char *argv[]){
     //inizzializzazione struttura dati per thread consumatore
     datiC consumatore[ThreadNumber] ;
     int *ValoriInseriti = calloc(NodeNumber,sizeof(int)) ;
-    for(int i = 0 ; i <ThreadNumber ; i++){
+
+    for(int i = 0 ; i < ThreadNumber ; i++){
         consumatore[i].Buffer = buffer ;
         consumatore[i].FreePlace = &FreePlace ;
         consumatore[i].ItemNumber = &ItemNumber ;
@@ -164,18 +165,17 @@ int main(int argc, char *argv[]){
         consumatore[i].buffindex = &indexC ;
         consumatore[i].g = &g ;
         consumatore[i].inseriti = ValoriInseriti ;
-        xpthread_create(&th[i],NULL,ArchManagement,&consumatore[i],QUI) ;
+        xpthread_create(&th[i],NULL,ArchManagement,&consumatore[i],QUI) ;   
     }
     
     //lettura del file e caricamento del buffer
     ReadingFile(FileName,&produttore) ;
     
-    
     //attendo la fine dei consumatori
     for(int i = 0 ; i < ThreadNumber ; i++){
         xpthread_join(th[i],NULL,QUI) ;
     }
-    
+   
     //inizzializzazione dati per il calcolo del pagerank e stampa dei risultati
     int IterationNumber = 0 , DeadNodesNumber = 0 , ValidArch = 0 ;
     double RankSum = 0.0;
@@ -183,7 +183,7 @@ int main(int argc, char *argv[]){
     for(int i = 0 ; i < NodeNumber ; i++){
         g.in[i].len = ValoriInseriti[i] ;
         g.in[i].inArrow = realloc(g.in[i].inArrow,ValoriInseriti[i]*sizeof(int)) ;
-        
+    
         if(g.out[i] == 0){
             DeadNodesNumber += 1 ;
         }
@@ -199,9 +199,11 @@ int main(int argc, char *argv[]){
     xsem_destroy(&ItemNumber,QUI) ;
     xpthread_mutex_destroy(&mutexBuf,QUI) ;
     xpthread_mutex_destroy(&mutexArr,QUI) ;
-
+    
+    //vettore risultante del calcolo del pagerank
     double *risultato = pagerank(&g,DampFactor,MaxError,MaxIteration,ThreadNumber,&IterationNumber) ;
 
+    //vettore che conterra i nodi ordinati con valore decrescente
     TopElement *RisOrdinato = malloc(NodeNumber*sizeof(TopElement)) ;
 
     //calcolo della somma dei rank e inizzializzazione struttura dati TopElement
@@ -225,7 +227,7 @@ int main(int argc, char *argv[]){
     for(int i = 0 ; i < NumberOfTopNodes ; i++){
         printf("  %d %f\n",RisOrdinato[i].index,RisOrdinato[i].value) ;
     }
-
+    
     //dealloco gli elementi del grafo
     free(g.out) ;
     for(int i = 0 ; i < NodeNumber ; i++){
@@ -233,7 +235,7 @@ int main(int argc, char *argv[]){
     }
     free(g.in) ;
 
-    //dealloco il vettore risultato
+    
     free(ValoriInseriti) ;
     free(risultato) ;
     free(RisOrdinato) ;
@@ -241,7 +243,6 @@ int main(int argc, char *argv[]){
 }
 
 bool Search(int target, int *arr, int len){
-    if(len == 0) return false ;
 
     for(int i = 0 ; i < len ; i++){
         if(arr[i] == target) return true ;
@@ -385,20 +386,20 @@ void ReadingFile(char *FileName, void *arg ){
                 //inserimento dei nodi all'interno del buffer ;
 
                 xsem_wait(d->FreePlace,QUI) ;
-                d->Buffer[*(d->buffindex) % BufSize].i = i ;
-                d->Buffer[*(d->buffindex) % BufSize].j = j ;
+                d->Buffer[(*d->buffindex) % BufSize].i = i ;
+                d->Buffer[(*d->buffindex) % BufSize].j = j ;
                 
                 (*d->buffindex) += 1 ;
                 xsem_post(d->ItemNumber,QUI) ;
             }
        }
     }
-
+    
     //comunico ai consumatori la fine della lettura del file 
     for(int i = 0 ; i < d->ThNumber; i++){
         xsem_wait(d->FreePlace,QUI) ;
-        d->Buffer[*(d->buffindex) % BufSize].i = -1 ; 
-        d->Buffer[*(d->buffindex) % BufSize].j = -1 ; 
+        d->Buffer[(*d->buffindex) % BufSize].i = -1 ; 
+        d->Buffer[(*d->buffindex) % BufSize].j = -1 ; 
         (*d->buffindex) +=1 ;
         xsem_post(d->ItemNumber,QUI) ;
     }
@@ -417,8 +418,8 @@ void *ArchManagement(void *arg){
         xpthread_mutex_lock(d->mutex_buf,QUI) ;
         xsem_wait(d->ItemNumber,QUI) ;
 
-        i = d->Buffer[*(d->buffindex) % BufSize].i ;
-        j = d->Buffer[*(d->buffindex) % BufSize].j ;
+        i = d->Buffer[(*d->buffindex) % BufSize].i ;
+        j = d->Buffer[(*d->buffindex) % BufSize].j ;
         
         (*d->buffindex) += 1 ;
 
@@ -435,31 +436,25 @@ void *ArchManagement(void *arg){
         i -= 1 ;
         j -= 1 ;
         
-        
         //utilizzo un mutex per l'accesso esclusivo ai vettori in e out
         xpthread_mutex_lock(d->g->mutex_arr,QUI) ;
 
-        
         if(!Search(i,d->g->in[j].inArrow,d->inseriti[j])){
 
-            //inserimento dell'elemento i allinterno dell'array di archi entranti in j 
-            
-            if(d->inseriti[j] == d->g->in[j].len){
-                if(d->g->in[j].len == 0){
-                    d->g->in[j].len = 10 ;
-                    d->g->in[j].inArrow = realloc(d->g->in[j].inArrow,d->g->in[j].len*sizeof(int)) ;
-                }else{
-                    d->g->in[j].len *= 2 ;
-                    d->g->in[j].inArrow = realloc(d->g->in[j].inArrow,d->g->in[j].len*sizeof(int)) ;
-                }
+            if(d->inseriti[j] == d->g->in[j].len -1){
+                d->g->in[j].len *= 2 ;
+                d->g->in[j].inArrow = realloc(d->g->in[j].inArrow,d->g->in[j].len*sizeof(int)) ;
             }
+
+            //inserimento dell'arco
+            d->g->in[j].inArrow[d->inseriti[j]] = i ;
             d->inseriti[j] += 1 ;
-            d->g->in[j].inArrow = realloc(d->g->in[j].inArrow,d->g->in[j].len*sizeof(int)) ;
-            d->g->in[j].inArrow[d->inseriti[j] -1] = i ;
-            
+
             //aumento dal valore degli archi uscenti dal nodo i
             d->g->out[i] += 1 ;
+            
         }
+
         xpthread_mutex_unlock(d->g->mutex_arr,QUI) ;
     }
     
@@ -622,7 +617,7 @@ void *PagerankCalc(void *arg){
     PageRankdata *data = (PageRankdata *) arg ;
     int j = 0 ;
     float somma  = 0.0, newx = 0.0 , newe = 0.0;
-
+    
     while(true){
         somma = 0 ;
         newx = 0 ;
