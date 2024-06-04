@@ -138,11 +138,15 @@ int main(int argc, char *argv[]){
     g.in = malloc(NodeNumber*sizeof(inmap)) ;
     g.mutex_arr = &mutexArr ;
 
+    if(g.out == NULL) termina("Errore malloc g.out") ;
+    if(g.in == NULL) termina("Errore malloc g.in") ;
 
     //inizzializzazioni campi array di tipo inmap
     for(int i = 0 ; i < NodeNumber ; i++){
-        g.in[i].len = 10 ;
+        g.in[i].len = 1 ;
         g.in[i].inArrow = malloc((g.in[i].len)*sizeof(int)) ;
+
+        if(g.in[i].inArrow == NULL) termina("Errore malloc g.in[i].inArrow") ;
     }
 
     //inizzializzazione struttura dati per thread produttore
@@ -156,6 +160,8 @@ int main(int argc, char *argv[]){
     //inizzializzazione struttura dati per thread consumatore
     datiC consumatore[ThreadNumber] ;
     int *ValoriInseriti = calloc(NodeNumber,sizeof(int)) ;
+
+    if(ValoriInseriti == NULL) termina("Errore calloc ValoriInseriti") ;
 
     for(int i = 0 ; i < ThreadNumber ; i++){
         consumatore[i].Buffer = buffer ;
@@ -183,7 +189,9 @@ int main(int argc, char *argv[]){
     for(int i = 0 ; i < NodeNumber ; i++){
         g.in[i].len = ValoriInseriti[i] ;
         g.in[i].inArrow = realloc(g.in[i].inArrow,ValoriInseriti[i]*sizeof(int)) ;
-    
+
+        if(g.in[i].len != 0 && g.in[i].inArrow == NULL) termina("Errore Realloc g.in[i].inArrow") ;
+
         if(g.out[i] == 0){
             DeadNodesNumber += 1 ;
         }
@@ -205,6 +213,8 @@ int main(int argc, char *argv[]){
 
     //vettore che conterra i nodi ordinati con valore decrescente
     TopElement *RisOrdinato = malloc(NodeNumber*sizeof(TopElement)) ;
+
+    if(RisOrdinato == NULL) termina("Errore malloc RisOdinato") ;
 
     //calcolo della somma dei rank e inizzializzazione struttura dati TopElement
     for(int i = 0 ; i < NodeNumber ; i++){
@@ -444,6 +454,9 @@ void *ArchManagement(void *arg){
             if(d->inseriti[j] == d->g->in[j].len -1){
                 d->g->in[j].len *= 2 ;
                 d->g->in[j].inArrow = realloc(d->g->in[j].inArrow,d->g->in[j].len*sizeof(int)) ;
+                if(d->g->in[j].inArrow == NULL){
+                    termina("Errore Realloc d->g->in[j].inArrow") ;
+                }
             }
 
             //inserimento dell'arco
@@ -469,6 +482,10 @@ double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *num
     double *Y = malloc(g->N*sizeof(double)) ;
     double *NewX = malloc(g->N*sizeof(double)) ; 
 
+    if(X == NULL) termina("Errore malloc X") ;
+    if(Y == NULL) termina("Errore malloc Y") ;
+    if(NewX == NULL) termina("Errore malloc NewX") ;
+
     //inizzializzazione elementi per la sincronizzazione
     
     pthread_mutex_t mutexWorkIndex  = PTHREAD_MUTEX_INITIALIZER ;
@@ -488,6 +505,9 @@ double *pagerank(grafo *g, double d, double eps, int maxiter, int taux, int *num
 
     int *NotDeadNodes = malloc(g->N*sizeof(int)) ;
     int NumberdOfNotDeadNodes = 0 ;
+    
+    if(DeadNodes == NULL) termina("Errore malloc vettore DeadNodes") ;
+    if(NotDeadNodes == NULL) termina("Errore mallloc vettore NotDeadNodes") ;
 
     //inizzializzazione del vettore pagerank e ricerca nodi senza archi uscenti
     for(int i = 0 ; i < g->N ; i++){
@@ -698,10 +718,10 @@ void *SignalBody(void *arg){
                     iterazione = (*d->IterationNumber) ;
                 }
             }
-            xpthread_mutex_unlock(d->mutex,QUI) ;
             fprintf(stderr,"\nCurrent Iteration : %d\n",iterazione) ;
             fprintf(stderr,"Current Max Pagerank node : %d value : %f\n",indice,MaxValue);
             segnale = false ;
+            xpthread_mutex_unlock(d->mutex,QUI) ;
         }
     }
     
