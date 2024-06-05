@@ -674,7 +674,9 @@ void *PagerankCalc(void *arg){
         
         //caricamento del nuovo pagerank 
         data->NewX[j] = newx ;
+        xpthread_mutex_lock(data->mutex,QUI);
         (*data->e ) += newe ;
+        xpthread_mutex_unlock(data->mutex,QUI);
         
     }
 }
