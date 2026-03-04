@@ -107,7 +107,7 @@ The following chart shows the scalability of this implementation on a mid-2012 l
 
 **Benchmark Command:**
 ```bash
-./pagerank ../test_data/web-Stanford.mtx --threads 4 --test
+./pagerank ../test_data/web-Stanford.mtx --threads 8 --test
 ```
 
 **System Specifications (Test Environment):**
