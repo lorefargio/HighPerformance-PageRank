@@ -3,10 +3,10 @@ import matplotlib.pyplot as plt
 import os
 
 def plot_benchmarks():
-    csv_path = "benchmarks/last_run.csv"
+    csv_path = os.path.join(os.path.dirname(__file__), "..", "benchmarks", "last_run.csv")
     
     if not os.path.exists(csv_path):
-        print(f"Error: {csv_path} not found. Run pagerank with --test first.")
+        print(f"Error: {csv_path} not found. Run the C++ executable with --test first.")
         return
 
     # Caricamento dati

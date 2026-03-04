@@ -98,6 +98,37 @@ perf stat -e cycles,instructions,cache-references,cache-misses,L1-dcache-load-mi
 
 ---
 
+
+### Benchmark Example (Real-World Data)
+
+The following chart shows the scalability of this implementation on a mid-2012 laptop. You can see how the **Memory Wall** starts to limit performance as the number of threads increases, despite the tiling optimizations.
+
+![Performance Chart](benchmarks/performance_report.png)
+
+**Benchmark Command:**
+```bash
+./pagerank ../test_data/web-Stanford.mtx --threads 4 --test
+```
+
+**System Specifications (Test Environment):**
+
+* **Processor:** Intel(R) Core(TM) i5-3210M CPU @ 2.50GHz
+* **Cores/Threads:** 2 Physical Cores / 4 Logical Threads
+* **Memory:** 16GB DDR3 1600MHz
+* **OS:** Ubuntu 22.04 LTS 
+* **Cache:** L1 64KB, L2 512KB, L3 3MB
+
+
+### Performance Discussion: The "Two-Thread Cliff"
+As observed in the benchmarks, scalability is nearly linear up to **2 threads** (matching the physical core count) but plateaus or degrades slightly with 4 threads. 
+
+**Why this happens:**
+1. **Hyper-Threading Limits**: PageRank is a high-throughput workload. On a 2-core/4-thread CPU, logical threads compete for the same execution units and L1 cache, leading to diminishing returns.
+2. **Memory Bandwidth Throttling**: The DDR3-1600 bus becomes a bottleneck. Once the maximum memory bandwidth is reached, adding more threads only increases contention and cache-miss penalty.
+3. **Context Switching Overhead**: On older architectures, the overhead of managing 4 threads for memory-bound tasks often outweighs the computational benefits.
+
+---
+
 ## Build Instructions
 
 ```bash
@@ -111,5 +142,4 @@ make -j$(nproc)
 ## License
 
 This project is released under the **MIT License**.
-
 

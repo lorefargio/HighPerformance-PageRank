@@ -18,6 +18,16 @@ struct TestMetrics {
     double calc_time;
 };
 
+/**
+ * @brief Helper to find the project root relative to the executable location.
+ * Assumes the binary is in <root>/build/ or <root>/bin/
+ */
+fs::path get_project_root(const char* argv0) {
+    fs::path exe_path = fs::absolute(argv0).parent_path();
+    // Go up one level from 'build' to reach the root
+    return exe_path.parent_path();
+}
+
 int main(int argc, char** argv) {
     try {
         AppConfig config = ConfigParser::parse(argc, argv);
@@ -37,10 +47,6 @@ int main(int argc, char** argv) {
             GraphBuilder builder(config.filepath, t);
             GraphData graph = builder.build();
 
-            auto start_io = std::chrono::high_resolution_clock::now();
-            auto end_io = std::chrono::high_resolution_clock::now();
-            double io_elapsed = std::chrono::duration<double>(end_io - start_io).count(); 
-
             ThreadPool pool(t);
             PageRankEngine engine(graph, pool, config);
 
@@ -49,7 +55,7 @@ int main(int argc, char** argv) {
             auto end_calc = std::chrono::high_resolution_clock::now();
             double calc_elapsed = std::chrono::duration<double>(end_calc - start_calc).count();
 
-            all_stats.push_back({t, 0.0, calc_elapsed}); // Focalizziamoci sul tempo di calcolo
+            all_stats.push_back({t, 0.0, calc_elapsed}); 
 
             if (t == end_t) {
                 ResultsExporter exporter;
@@ -57,17 +63,24 @@ int main(int argc, char** argv) {
             }
         }
 
-
         if (config.test_mode) {
-            // Navigate to the parent directory (project root) from the build folder
-            fs::path project_root = fs::current_path().parent_path();
-            fs::path benchmark_dir = project_root / "benchmarks";
+            fs::path root = get_project_root(argv[0]);
+            fs::path benchmark_dir = root / "benchmarks";
+            fs::path out_file = benchmark_dir / "last_run.csv";
             
-            fs::create_directory(benchmark_dir);
+            // Professional handling: ensure directory exists
+            fs::create_directories(benchmark_dir);
             
-            std::string out_file = (benchmark_dir / "last_run.csv").string();
+            // If the file exists, delete it to ensure a fresh start
+            if (fs::exists(out_file)) {
+                fs::remove(out_file);
+            }
+            
             std::ofstream ofs(out_file);
-            
+            if (!ofs.is_open()) {
+                throw std::runtime_error("Could not create benchmark file at: " + out_file.string());
+            }
+
             ofs << "threads,calc_time,speedup,efficiency\n";
             double t1_time = all_stats[0].calc_time;
 
@@ -76,6 +89,8 @@ int main(int argc, char** argv) {
                 double efficiency = (speedup / s.threads) * 100.0;
                 ofs << s.threads << "," << s.calc_time << "," << speedup << "," << efficiency << "\n";
             }
+            ofs.close();
+
             std::cout << "\n[Success] Benchmark results saved to: " << out_file << "\n";
         }
 
