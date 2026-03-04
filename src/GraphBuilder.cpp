@@ -8,12 +8,15 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <cctype> // per isdigit
+#include <cctype>
 
+/**
+ * @brief Producer thread: Memory-maps the file and pushes raw edge chunks to the queue.
+ */
 void GraphBuilder::producerWorker() {
     int fd = open(filepath.c_str(), O_RDONLY);
     if (fd == -1) {
-        chunk_queue.set_finished(); // Mai lasciare i consumatori appesi
+        chunk_queue.set_finished();
         return;
     }
 
@@ -40,10 +43,9 @@ void GraphBuilder::producerWorker() {
 
     try {
         while (ptr < end) {
-            // 1. Salta spazi bianchi, ritorni a capo e commenti
+            // Skip whitespaces, newlines, and comments
             while (ptr < end && (std::isspace(*ptr) || *ptr == '%' || *ptr == '#')) {
                 if (*ptr == '%' || *ptr == '#') {
-                    // Salta tutta la riga di commento
                     while (ptr < end && *ptr != '\n') ptr++;
                 } else {
                     ptr++;
@@ -52,22 +54,21 @@ void GraphBuilder::producerWorker() {
 
             if (ptr >= end) break;
 
-            // 2. Parsing robusto del primo intero (Sorgente)
+            // Robust parsing of source ID
             int v1 = 0;
             if (ptr < end && std::isdigit(*ptr)) {
                 while (ptr < end && std::isdigit(*ptr)) {
                     v1 = v1 * 10 + (*ptr++ - '0');
                 }
             } else {
-                // Se non è un numero, avanziamo per evitare loop infiniti
                 if (ptr < end) ptr++;
                 continue;
             }
 
-            // 3. Salta separatori tra i due numeri
+            // Skip separators
             while (ptr < end && !std::isdigit(*ptr) && *ptr != '\n' && *ptr != '%' && *ptr != '#') ptr++;
 
-            // 4. Parsing del secondo intero (Destinazione)
+            // Robust parsing of destination ID
             int v2 = 0;
             if (ptr < end && std::isdigit(*ptr)) {
                 while (ptr < end && std::isdigit(*ptr)) {
@@ -77,13 +78,12 @@ void GraphBuilder::producerWorker() {
                 continue;
             }
 
-            // 5. Gestione Header MTX (Righe Colonne Archi)
+            // Skip MTX MatrixMarket header
             if (!header_skipped) {
                 header_skipped = true;
                 continue; 
             }
 
-            // 6. Aggiunta al chunk [cite: 102]
             current_chunk.emplace_back(v1, v2);
 
             if (current_chunk.size() >= 1024) {
@@ -92,9 +92,7 @@ void GraphBuilder::producerWorker() {
                 current_chunk.reserve(1024);
             }
         }
-    } catch (...) {
-        // In caso di errore imprevisto, assicuriamo la chiusura della coda
-    }
+    } catch (...) {}
 
     if (!current_chunk.empty()) {
         chunk_queue.push(std::move(current_chunk));
@@ -105,10 +103,13 @@ void GraphBuilder::producerWorker() {
     close(fd);
 }
 
+/**
+ * @brief Consumer thread: Parses raw edge chunks and populates local adjacency lists.
+ */
 void GraphBuilder::consumerWorker(LocalGraphState& state) {
     while (auto chunk = chunk_queue.pop()) {
         for (auto& [src, dest] : *chunk) {
-            // Normalizzazione: MTX parte da 1, C++ da 0
+            // 1-based to 0-based conversion
             int s = src - 1;
             int d = dest - 1;
 
@@ -118,8 +119,8 @@ void GraphBuilder::consumerWorker(LocalGraphState& state) {
                 state.local_out_degrees.resize(max_id + 1, 0);
             }
 
-            state.local_in_adj[d].push_back(s); // Archi entranti per CSR [cite: 80, 86]
-            state.local_out_degrees[s]++;       // Grado uscente per nodi dead-end 
+            state.local_in_adj[d].push_back(s); 
+            state.local_out_degrees[s]++;      
             state.max_node = std::max(state.max_node, max_id);
         }
     }
@@ -129,7 +130,7 @@ GraphData GraphBuilder::build() {
     std::vector<LocalGraphState> local_states(num_workers);
     std::vector<std::thread> consumers;
 
-    // 1. Avvio Produttore e Consumatori [cite: 99]
+    // Start Producer and Consumers
     std::thread producer(&GraphBuilder::producerWorker, this);
     for (int i = 0; i < num_workers; ++i) {
         consumers.emplace_back(&GraphBuilder::consumerWorker, this, std::ref(local_states[i]));
@@ -137,28 +138,25 @@ GraphData GraphBuilder::build() {
     producer.join();
     for (auto& t : consumers) t.join();
 
-    // 2. Determinazione dimensione globale 
     int total_nodes = 0;
     for (const auto& s : local_states) total_nodes = std::max(total_nodes, s.max_node + 1);
 
     if (total_nodes == 0) return GraphData(0, {}, {}, {0});
 
-    // 3. Calcolo Out-Degrees e Conteggi Locali
+    // Merge degrees and counts
     std::vector<int> final_out_degrees(total_nodes, 0);
     std::vector<std::vector<int>> thread_node_counts(num_workers, std::vector<int>(total_nodes, 0));
 
     for (int i = 0; i < num_workers; ++i) {
-        // Unisci out-degrees
         for (int j = 0; j < (int)local_states[i].local_out_degrees.size(); ++j) {
             final_out_degrees[j] += local_states[i].local_out_degrees[j];
         }
-        // Registra quanti archi entranti ha ogni thread per ogni nodo
         for (int j = 0; j < (int)local_states[i].local_in_adj.size(); ++j) {
             thread_node_counts[i][j] = (int)local_states[i].local_in_adj[j].size();
         }
     }
 
-    // 4. Costruzione in_offsets (CSR Format) [cite: 80, 87]
+    // CSR Offset Construction
     std::vector<int> in_offsets(total_nodes + 1, 0);
     size_t current_offset = 0;
     for (int j = 0; j < total_nodes; ++j) {
@@ -169,20 +167,18 @@ GraphData GraphBuilder::build() {
     }
     in_offsets[total_nodes] = static_cast<int>(current_offset);
 
-    // 5. Merge Parallelo con controlli di sicurezza
+    // Parallel Merge into final CSR structure
     std::vector<int> final_in_edges(current_offset);
     std::vector<std::thread> merger_threads;
 
     for (int i = 0; i < num_workers; ++i) {
         merger_threads.emplace_back([&, i]() {
             for (int j = 0; j < total_nodes; ++j) {
-                // Calcolo posizione di scrittura
                 int write_idx = in_offsets[j];
                 for (int prev_thread = 0; prev_thread < i; ++prev_thread) {
                     write_idx += thread_node_counts[prev_thread][j];
                 }
                 
-                // SICUREZZA: Verifica se il thread 'i' ha visto il nodo 'j'
                 if (j < (int)local_states[i].local_in_adj.size()) {
                     const auto& local_adj = local_states[i].local_in_adj[j];
                     if (!local_adj.empty()) {
@@ -195,7 +191,6 @@ GraphData GraphBuilder::build() {
 
     for (auto& t : merger_threads) t.join();
 
-    // Restituisce il contenitore immutabile GraphData [cite: 19, 56, 83]
     return GraphData(total_nodes, std::move(final_out_degrees), 
                      std::move(final_in_edges), std::move(in_offsets));
 }

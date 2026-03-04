@@ -5,11 +5,10 @@
 #include <mutex>
 #include <condition_variable>
 #include <functional>
-#include <atomic>
 
 /**
- * @brief Gestore del ciclo di vita dei thread. 
- * Mantiene i thread attivi per tutta la durata dell'algoritmo.
+ * @brief Manages a pool of persistent worker threads.
+ * Minimizes thread creation overhead during iterative calculations.
  */
 class ThreadPool {
 private:
@@ -21,13 +20,13 @@ private:
     bool stop;
 
 public:
+    /** @brief Initializes the pool with the specified number of threads. */
     explicit ThreadPool(size_t threads);
     ~ThreadPool();
 
-    /**
-     * @brief Invia un nuovo task (chiusura lambda) al pool[cite: 26, 63].
-     */
+    /** @brief Enqueues a task (lambda or function) for execution. */
     void enqueue(std::function<void()> task);
     
+    /** @return Number of active threads in the pool. */
     size_t get_num_threads() const { return workers.size(); }
 };

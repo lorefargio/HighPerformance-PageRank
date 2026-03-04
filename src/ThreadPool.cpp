@@ -1,4 +1,4 @@
-#include "ThreadPool.hpp"
+#include "../include/ThreadPool.hpp"
 
 ThreadPool::ThreadPool(size_t threads) : stop(false) {
     for (size_t i = 0; i < threads; ++i) {
@@ -16,7 +16,7 @@ ThreadPool::ThreadPool(size_t threads) : stop(false) {
                     task = std::move(this->tasks.front());
                     this->tasks.pop();
                 }
-                task(); // Esecuzione del task (es. computeChunk)
+                task(); 
             }
         });
     }

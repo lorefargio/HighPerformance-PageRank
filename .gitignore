@@ -1,4 +1,4 @@
-*.mtx
 /build
-*.o 
 .vscode/
+/venv
+*.csv

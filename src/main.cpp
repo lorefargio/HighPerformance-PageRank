@@ -7,92 +7,81 @@
 #include <chrono>
 #include <vector>
 #include <iomanip>
-#include <cmath>
+#include <fstream>
+#include <filesystem> 
+
+namespace fs = std::filesystem;
 
 struct TestMetrics {
     int threads;
     double io_time;
     double calc_time;
-    double total_time;
 };
 
 int main(int argc, char** argv) {
     try {
-        // 1. Parsing della configurazione [cite: 33, 70]
-        if (argc < 2) {
-            std::cerr << "Utilizzo: " << argv[0] << " <file.mtx>\n";
-            return 1;
-        }
-
         AppConfig config = ConfigParser::parse(argc, argv);
-        int max_threads = config.num_threads;
         std::vector<TestMetrics> all_stats;
 
         std::cout << "========================================================\n";
-        std::cout << "      BENCHMARK PAGERANK - REFACTORING C++20           \n";
+        std::cout << (config.test_mode ? "   BENCHMARK MODE - PAGERANK C++20" : "   SINGLE RUN MODE - PAGERANK C++20") << "\n";
         std::cout << "========================================================\n";
-        std::cout << "File: " << config.filepath << "\n";
-        std::cout << "Max Threads: " << max_threads << "\n\n";
+        std::cout << "File: " << config.filepath << "\n\n";
 
-        for (int t = max_threads; t <= max_threads; ++t) {
-            std::cout << "--> Esecuzione con " << t << (t == 1 ? " thread..." : " thread...") << std::endl;
+        int start_t = config.test_mode ? 1 : config.num_threads;
+        int end_t = config.num_threads;
 
-            // 2. Costruzione del Grafo (I/O e Sincronizzazione) [cite: 11, 48, 78]
-            auto start_io = std::chrono::high_resolution_clock::now();
+        for (int t = start_t; t <= end_t; ++t) {
+            if (config.test_mode) std::cout << "--> Testing with " << t << " thread(s)..." << std::endl;
+
             GraphBuilder builder(config.filepath, t);
             GraphData graph = builder.build();
-            auto end_io = std::chrono::high_resolution_clock::now();
-            double io_elapsed = std::chrono::duration<double>(end_io - start_io).count();
 
-            // 3. Setup Calcolo Concorrente [cite: 21, 58, 108]
+            auto start_io = std::chrono::high_resolution_clock::now();
+            auto end_io = std::chrono::high_resolution_clock::now();
+            double io_elapsed = std::chrono::duration<double>(end_io - start_io).count(); 
+
             ThreadPool pool(t);
             PageRankEngine engine(graph, pool, config);
 
             auto start_calc = std::chrono::high_resolution_clock::now();
-            std::vector<double> results = engine.solve(); // [cite: 38, 75]
+            std::vector<double> results = engine.solve();
             auto end_calc = std::chrono::high_resolution_clock::now();
             double calc_elapsed = std::chrono::duration<double>(end_calc - start_calc).count();
 
-            all_stats.push_back({t, io_elapsed, calc_elapsed, io_elapsed + calc_elapsed});
+            all_stats.push_back({t, 0.0, calc_elapsed}); // Focalizziamoci sul tempo di calcolo
 
-            // Mostriamo solo i risultati del primo thread per brevità o se è l'ultima run
-            if (t == max_threads) {
+            if (t == end_t) {
                 ResultsExporter exporter;
-                exporter.exportTopK(results, config.top_k, std::cout); // [cite: 40, 77, 146]
+                exporter.exportTopK(results, config.top_k, std::cout);
             }
         }
 
-        // --- STAMPA DELLE STATISTICHE E CORRELAZIONI ---
-        std::cout << "\n============================================================================\n";
-        std::cout << std::left << std::setw(10) << "Threads" 
-                  << std::setw(15) << "I/O (s)" 
-                  << std::setw(15) << "Calc (s)" 
-                  << std::setw(15) << "Speedup" 
-                  << std::setw(15) << "Efficienza" << "\n";
-        std::cout << "----------------------------------------------------------------------------\n";
 
-        double t1_calc = all_stats[0].calc_time;
+        if (config.test_mode) {
+            // Navigate to the parent directory (project root) from the build folder
+            fs::path project_root = fs::current_path().parent_path();
+            fs::path benchmark_dir = project_root / "benchmarks";
+            
+            fs::create_directory(benchmark_dir);
+            
+            std::string out_file = (benchmark_dir / "last_run.csv").string();
+            std::ofstream ofs(out_file);
+            
+            ofs << "threads,calc_time,speedup,efficiency\n";
+            double t1_time = all_stats[0].calc_time;
 
-        for (const auto& s : all_stats) {
-            // Speedup S = T1 / Tn 
-            double speedup = t1_calc / s.calc_time;
-            // Efficienza E = S / n
-            double efficiency = speedup / s.threads;
-
-            std::cout << std::left << std::setw(10) << s.threads 
-                      << std::fixed << std::setprecision(4)
-                      << std::setw(15) << s.io_time 
-                      << std::setw(15) << s.calc_time 
-                      << std::setw(15) << speedup 
-                      << std::setw(15) << (efficiency * 100.0) << "%" << "\n";
+            for (const auto& s : all_stats) {
+                double speedup = t1_time / s.calc_time;
+                double efficiency = (speedup / s.threads) * 100.0;
+                ofs << s.threads << "," << s.calc_time << "," << speedup << "," << efficiency << "\n";
+            }
+            std::cout << "\n[Success] Benchmark results saved to: " << out_file << "\n";
         }
-        std::cout << "============================================================================\n";
-        std::cout << "Nota: Lo speedup ideale e' lineare. Deviazioni indicano limiti di memoria (Memory Wall).\n";
 
     } catch (const std::exception& e) {
-        std::cerr << "Errore critico: " << e.what() << "\n";
+        std::cerr << "Critical Error: " << e.what() << "\n";
         return 1;
     }
-
     return 0;
 }

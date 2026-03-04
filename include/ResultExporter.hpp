@@ -2,19 +2,20 @@
 #include <vector>
 #include <iostream>
 
-/**
- * @brief Associa un nodo al suo rank per l'ordinamento.
- */
+/** @brief Helper structure mapping a node ID to its PageRank score. */
 struct NodeRank {
     int id;
     double rank;
 };
 
+/**
+ * @brief Exports top-performing nodes to various streams.
+ */
 class ResultsExporter {
 public:
     /**
-     * @brief Esporta i Top K nodi con il rank più alto.
-     * Utilizza std::partial_sort per un'efficienza O(N log K).
+     * @brief Sorts and prints the top K nodes by rank.
+     * Uses std::partial_sort for O(N log K) efficiency.
      */
     void exportTopK(const std::vector<double>& ranks, int k, std::ostream& out);
 };
